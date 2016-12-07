@@ -29,10 +29,10 @@ struct Point3D {
 };
 
 struct WaveData {
-	Point3D DrawPlot[Range];
-	double RawData[Range];
-	double FFTData[Range];
-	int64_t TimeStmp[Range];
+	std::vector<std::vector<Point3D> > DrawPlot;
+	double* RawData;
+	double* FFTData;
+	int64_t* TimeStmp;
 };
 
 class AnalyzeFFT {
@@ -62,18 +62,18 @@ class AnalyzeFFT {
 	inline void CalcFFTddst() {
 		FFT->ddst(1, Wav.FFTData);
 	}
-	inline void MakePlotData() {
+	template<class Data>inline void MakePlotData(Data* OutputData,int DrawAxis) {
 		double LocalMax = 0.0;
 		for (int64_t loop = 0; loop < Range; loop++) {
-			Wav.DrawPlot[loop].x = (GLfloat)(loop - Range / 2) / (Range / 2);
-			Wav.DrawPlot[loop].y = (GLfloat)Wav.FFTData[loop];
-			Wav.DrawPlot[loop].z = (GLfloat)0.0f;
-			if (std::abs(Wav.FFTData[loop]) > LocalMax) {
-				LocalMax = std::abs(Wav.FFTData[loop]);
+			Wav.DrawPlot[DrawAxis][loop].x = (GLfloat)(loop - Range / 2) / (Range / 2);
+			Wav.DrawPlot[DrawAxis][loop].y = (GLfloat)OutputData[loop];
+			Wav.DrawPlot[DrawAxis][loop].z = (GLfloat)0.0f;
+			if (std::abs(OutputData[loop]) > LocalMax) {
+				LocalMax = std::abs(OutputData[loop]);
 			}
 		}
 		for (int64_t loop = 0; loop < Range; loop++) {
-			Wav.DrawPlot[loop].y /= 1.2*LocalMax;
+			Wav.DrawPlot[DrawAxis][loop].y /= 4*LocalMax;
 		}
 	}
 	inline void OutputCSVAll() {
@@ -82,29 +82,58 @@ class AnalyzeFFT {
 		}
 	}
 public:
-	inline void InitFFT() {
+	inline void InitFFT(const char* Name ) {
 		InputDataPos = 0;
+		std::vector<Point3D> Tmp;
+		Tmp.resize(Range);
+		Wav.DrawPlot.resize(3, Tmp);
+		Wav.FFTData = new double[Range];
+		Wav.RawData = new double[Range];
+		Wav.TimeStmp = new int64_t[Range];
 		FFT = new fft4g(Range);
-		Output = new std::fstream("mnt/sdcard/aaaa.csv", std::fstream::out);
+		Output = new std::fstream(Name, std::fstream::out);
 	}
 	inline ~AnalyzeFFT() {
 		delete[] FFT;
 		delete[] Output;
+		delete[] Wav.FFTData;
+		delete[] Wav.RawData;
+		delete[] Wav.TimeStmp;
+	}
+	inline void GenerateFreq(const ASensorEvent* Event) {
+		int64_t LocalDataPos = GetDataPos();
+		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
+		Wav.RawData[LocalDataPos] = std::sin(2*3.1415*12* LocalDataPos/ Range);
+		Wav.FFTData[LocalDataPos] = std::sin(2 * 3.1415*12 *LocalDataPos / Range);;
+		NextDataPos();
 	}
 	inline void SetAxel(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
 		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
-		Wav.RawData[LocalDataPos] = Event->acceleration.z - 9.77017;
-		Wav.FFTData[LocalDataPos] = Event->acceleration.z - 9.77017;
+		Wav.RawData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
+		Wav.FFTData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
+		NextDataPos();
+	}
+	inline void SetVel(const ASensorEvent* Event) {
+		int64_t LocalDataPos = GetDataPos();
+		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
+		Wav.RawData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
+		Wav.FFTData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
 		NextDataPos();
 	}
 	inline void OutputDisp(EGLDisplay* display,EGLSurface* surface) {
 		const GLfloat XLay[] = {//頂点
 			-1.0f,0.0f,0.0f,
-			1.0f, 0.0f,0.0f };
+			 1.0f,0.0f,0.0f, 
+			-1.0f,-0.5f,0.0f,
+			 1.0f,-0.5f,0.0f, 
+			-1.0f,0.5f,0.0f,
+			 1.0f,0.5f,0.0f 
+		};
 		const GLfloat YLay[] = {//頂点
-			0.0f,1.0f,0.0f,
-			0.0f,-1.0f,0.0f };
+			-1.0f,1.0f,0.0f,
+			-1.0f,-1.0f,0.0f };
+		glLineWidth(4.0f);
 		glClearColor(((float)1.0), 1.0, 1, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
 		glColor4f(1, 0, 0, 0.5f);
@@ -112,27 +141,43 @@ public:
 		glVertexPointer(3, GL_FLOAT, 0, XLay);
 		glEnableClientState(GL_VERTEX_ARRAY);
 		//プリミティブの描画
-		glDrawArrays(GL_LINES, 0, 2);
-
+		glDrawArrays(GL_LINES, 0, 6);
+		glDisableClientState(GL_VERTEX_ARRAY);
 
 		glColor4f(0, 0, 1, 0.5f);
 		glVertexPointer(3, GL_FLOAT, 0, YLay);
 		glEnableClientState(GL_VERTEX_ARRAY);
 		//プリミティブの描画
 		glDrawArrays(GL_LINES, 0, 2);
+		glDisableClientState(GL_VERTEX_ARRAY);
 
+
+		glLineWidth(1.0f);
 		glColor4f(0, 1, 0, 0.5f);
-		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot);
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[0].data());
+
+		//線描画
 		glEnableClientState(GL_VERTEX_ARRAY);
-		//プリミティブの描画
 		glDrawArrays(GL_LINE_STRIP, 0, Range);
+		glDisableClientState(GL_VERTEX_ARRAY);
+
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[1].data());
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glDrawArrays(GL_LINE_STRIP, 0, Range);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[2].data());
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glDrawArrays(GL_LINE_STRIP, 0, Range);
+		glDisableClientState(GL_VERTEX_ARRAY);
+		// バッファの入れ替え
 		eglSwapBuffers((*display),(*surface));
 
 	}
 	inline void TryProcess(){
 		if (YesSampleEnd()) {
 			CalcFFTddst();
-			MakePlotData();
+			MakePlotData(Wav.FFTData, 0);
+			MakePlotData(Wav.RawData, 1);
 			OutputCSVAll();
 			InitDataPos();
 		}
@@ -144,6 +189,7 @@ struct saved_state {
 	int32_t x;
 	int32_t y;
 	AnalyzeFFT FFTUnit;
+	AnalyzeFFT FFTUnitTest;
 };
 /**
 * アプリの保存状態です。
@@ -239,9 +285,7 @@ static void engine_draw_frame(struct engine* engine) {
 		// ディスプレイがありません。
 		return;
 	}
-
 	engine->state.FFTUnit.OutputDisp(&(engine->display),&(engine->surface));
-
 }
 
 /**
@@ -303,11 +347,8 @@ static void engine_handle_cmd(struct android_app* app, int32_t cmd) {
 	case APP_CMD_GAINED_FOCUS:
 		// アプリがフォーカスを取得すると、加速度計の監視を開始します。
 		if (engine->accelerometerSensor != NULL) {
-			ASensorEventQueue_enableSensor(engine->sensorEventQueue,
-				engine->accelerometerSensor);
-			// 目標は 1 秒ごとに 60 のイベントを取得することです (米国)。
-			ASensorEventQueue_setEventRate(engine->sensorEventQueue,
-				engine->accelerometerSensor, (1000L / 60) * 1000);
+			ASensorEventQueue_enableSensor(engine->sensorEventQueue,engine->accelerometerSensor);
+			ASensorEventQueue_setEventRate(engine->sensorEventQueue,engine->accelerometerSensor,  1000);
 		}
 		break;
 	case APP_CMD_LOST_FOCUS:
@@ -339,18 +380,26 @@ void android_main(struct android_app* state) {
 	engine.app = state;
 	// 加速度計の監視の準備
 	engine.sensorManager = ASensorManager_getInstance();
-	engine.accelerometerSensor = ASensorManager_getDefaultSensor(engine.sensorManager,
-		ASENSOR_TYPE_ACCELEROMETER);
+	engine.accelerometerSensor = ASensorManager_getDefaultSensor(engine.sensorManager,ASENSOR_TYPE_ACCELEROMETER);
 	engine.sensorEventQueue = ASensorManager_createEventQueue(engine.sensorManager,state->looper, LOOPER_ID_USER, NULL, NULL);
-	ASensorEventQueue_setEventRate(engine.sensorEventQueue,engine.accelerometerSensor, (500L));
-
+	ASensorEventQueue_setEventRate(engine.sensorEventQueue,engine.accelerometerSensor, (1000L));
+	engine.state.FFTUnit.InitFFT("mnt/sdcard/RF.csv");
+	engine.state.FFTUnitTest.InitFFT("mnt/sdcard/MF.csv");
 	if (state->savedState != NULL) {
 		// 以前の保存状態で開始します。復元してください。
 		engine.state = *(struct saved_state*)state->savedState;
 	}
+	ASensorEvent event;
+	if (engine.accelerometerSensor != NULL) {
 
-	engine.animating = 1;
-	engine.state.FFTUnit.InitFFT();
+		while (ASensorEventQueue_getEvents(engine.sensorEventQueue, &event, 1) > 0) {
+			engine.state.FFTUnit.SetAxel(&event);
+			engine.state.FFTUnitTest.GenerateFreq(&event);
+		}
+		engine.state.FFTUnit.TryProcess();
+		engine.state.FFTUnitTest.TryProcess();
+	}
+	engine.animating =1;
 	// ループはスタッフによる開始を待っています。
 	while (1) {
 		// 保留中のすべてのイベントを読み取ります。
@@ -361,8 +410,7 @@ void android_main(struct android_app* state) {
 		// アニメーションしない場合、無期限にブロックしてイベントが発生するのを待ちます。
 		// アニメーションする場合、すべてのイベントが読み取られるまでループしてから続行します
 		// アニメーションの次のフレームを描画します。
-		while ((ident = ALooper_pollAll(engine.animating ? 0 : -1, NULL, &events,
-			(void**)&source)) >= 0) {
+		while ((ident = ALooper_pollAll(engine.animating ? 0 : -1, NULL, &events,(void**)&source)) >= 0) {
 
 			// このイベントを処理します。
 			if (source != NULL) {
@@ -371,11 +419,12 @@ void android_main(struct android_app* state) {
 			// センサーにデータがある場合、今すぐ処理します。
 			if (ident == LOOPER_ID_USER) {
 				if (engine.accelerometerSensor != NULL) {
-					ASensorEvent event;
 					while (ASensorEventQueue_getEvents(engine.sensorEventQueue, &event, 1) > 0) {
 						engine.state.FFTUnit.SetAxel(&event);
+						engine.state.FFTUnitTest.GenerateFreq(&event);
 					}
 					engine.state.FFTUnit.TryProcess();
+					engine.state.FFTUnitTest.TryProcess();
 				}
 			}
 			// 終了するかどうか確認します。
@@ -384,10 +433,8 @@ void android_main(struct android_app* state) {
 				return;
 			}
 		}
-
+		// 画面の描画(60Hz)
 		if (engine.animating) {
-			// 描画は画面の更新レートに合わせて調整されているため、
-			// ここで時間調整をする必要はありません。
 			engine_draw_frame(&engine);
 		}
 	}

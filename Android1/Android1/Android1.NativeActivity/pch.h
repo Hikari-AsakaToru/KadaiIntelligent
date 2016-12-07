@@ -25,5 +25,5 @@
 #include "android_native_app_glue.h"
 
 #include "fft4g.hpp"
-#define Range 2048
+#define Range 1024
 
