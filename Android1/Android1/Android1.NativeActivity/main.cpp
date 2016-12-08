@@ -14,7 +14,7 @@
 * 本ライセンスを参照してください。
 *
 */
-
+#include "FFT.hpp"
 #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "AndroidProject1.NativeActivity", __VA_ARGS__))
 #define LOGD(...) ((void)__android_log_print(ANDROID_LOG_DEBUG, "AndroidProject1.NativeActivity", __VA_ARGS__))
 #define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, "AndroidProject1.NativeActivity", __VA_ARGS__))
@@ -26,25 +26,58 @@ struct Point3D {
 	GLfloat x;
 	GLfloat y;
 	GLfloat z;
+	void Init() {
+		this->x = 0.0f;
+		this->y = 0.0f;
+		this->z = 0.0f;
+	}
 };
 
 struct WaveData {
-	std::vector<std::vector<Point3D> > DrawPlot;
+	std::vector< std::vector<Point3D> > DrawPlot;
+	Point3D** DrawPlots;
 	double* RawData;
 	double* FFTData;
+	double* AnalyzedFFTData;
 	int64_t* TimeStmp;
 };
 
 class AnalyzeFFT {
 	WaveData Wav;
 	fft4g* FFT;
+	FftBox* FFTBox;
 	int64_t InputDataPos;
 	std::fstream* Output;
+	std::fstream* OutputFFT;
+	inline int64_t GetSampNum() {
+		return InputDataPos / Range;
+	}
 	inline void InitDataPos() {
 		InputDataPos = 0;
 	}
-	inline void OutputCSV1Line(int64_t Rloop) {
-		(*Output) << Rloop << "," << Wav.RawData[Rloop] << "," << Wav.FFTData[Rloop] << "," << Wav.TimeStmp[Rloop] << std::endl;
+	inline void OutputCSVFFT() {
+		auto Rloop = GetSampNum();
+		(*OutputFFT) << "OOURAFFT" << ",";
+		(*OutputFFT) << Rloop << ",";
+		for (auto i = 0; i < Range / 2; i++) {
+			(*OutputFFT) << std::sqrt(Wav.FFTData[2 * i] * Wav.FFTData[2 * i] + Wav.FFTData[2 * i + 1] * Wav.FFTData[2 * i + 1]) << ",";
+		}
+		for (auto i = 0; i < Range / 2; i++) {
+			(*OutputFFT) << "0.0,";
+		}
+		(*OutputFFT) << std::endl;
+		(*OutputFFT) << "BoxFFT" << ",";
+		(*OutputFFT) << Rloop << ",";
+		for (auto i = 0; i < Range; i++) {
+			(*OutputFFT) << std::abs((*FFTBox)[i]) << ",";
+		}
+		(*OutputFFT) << std::endl;
+	}
+	inline void OutputCSVRawData() {
+		for (int64_t Loop = 0; Loop < Range; Loop++) {
+			auto DataPos = (Loop + GetDataPos()) % Range;
+			(*Output) << Loop << "," << Wav.RawData[DataPos] << "," << Wav.TimeStmp[DataPos] << std::endl;
+		}
 	}
 	inline int64_t GetDataPos() {
 		return InputDataPos % Range;
@@ -60,45 +93,88 @@ class AnalyzeFFT {
 		}
 	}
 	inline void CalcFFTddst() {
-		FFT->ddst(1, Wav.FFTData);
+		FFT->cdft(1, Wav.FFTData);
+		FFTBox->fft();
+		for (int64_t i = 0; i < Range; i++) {
+			Wav.AnalyzedFFTData[i] = std::abs((*FFTBox)[i])*2/Range;
+			Wav.FFTData[i] *= 2 / Range;
+		}
 	}
-	template<class Data>inline void MakePlotData(Data* OutputData,int DrawAxis) {
-		double LocalMax = 0.0;
+	inline void ResizePlot(int DrawAxis,double LocalMax) {
 		for (int64_t loop = 0; loop < Range; loop++) {
-			Wav.DrawPlot[DrawAxis][loop].x = (GLfloat)(loop - Range / 2) / (Range / 2);
-			Wav.DrawPlot[DrawAxis][loop].y = (GLfloat)OutputData[loop];
-			Wav.DrawPlot[DrawAxis][loop].z = (GLfloat)0.0f;
+			Wav.DrawPlots[DrawAxis][loop].y /= 4 * LocalMax;
+			Wav.DrawPlots[DrawAxis][loop].y += (DrawAxis - 1) * 1 / 2;
+		}
+	}
+	template<class Data>inline void MakePlotDataFFT(Data* OutputData, int DrawAxis) {
+		double LocalMax = 0.0f;
+		for (int64_t loop = 0; loop < Range; loop++) {
+			Wav.DrawPlots[DrawAxis][loop].x = (GLfloat)(loop - Range / 2) / (Range / 2);
+			Wav.DrawPlots[DrawAxis][loop].y = (GLfloat)OutputData[loop] ;
+			Wav.DrawPlots[DrawAxis][loop].z = (GLfloat)0.0f;
 			if (std::abs(OutputData[loop]) > LocalMax) {
 				LocalMax = std::abs(OutputData[loop]);
 			}
 		}
+		ResizePlot(DrawAxis, LocalMax);
+	}
+	template<class Data>inline void MakePlotData(Data* OutputData, int DrawAxis) {
+		double LocalMax = 0.0;
+		int64_t DataPos = GetDataPos();
 		for (int64_t loop = 0; loop < Range; loop++) {
-			Wav.DrawPlot[DrawAxis][loop].y /= 4*LocalMax;
+			Wav.DrawPlots[DrawAxis][loop].x = (GLfloat)(loop - Range / 2) / (Range / 2);
+			Wav.DrawPlots[DrawAxis][loop].y = (GLfloat)OutputData[DataPos++ % Range];
+			Wav.DrawPlots[DrawAxis][loop].z = (GLfloat)0.0f;
+			if (std::abs(OutputData[loop]) > LocalMax) {
+				LocalMax = std::abs(OutputData[loop]);
+			}
 		}
+		ResizePlot(DrawAxis, LocalMax);
 	}
 	inline void OutputCSVAll() {
-		for (int64_t loop = 0; loop < Range; loop++) {
-			OutputCSV1Line(loop);
-		}
+		OutputCSVRawData();
+		OutputCSVFFT();
 	}
 public:
-	inline void InitFFT(const char* Name ) {
+	inline void InitFFT(const char* DataName, const char* FFTName) {
 		InputDataPos = 0;
+		Point3D InitPoint;
+		InitPoint.x = 0;
+		InitPoint.y = 0;
+		InitPoint.z = 0;
 		std::vector<Point3D> Tmp;
-		Tmp.resize(Range);
+		Wav.DrawPlots = new Point3D*[3];
+		for (int64_t i = 0; i < 3; i++) {
+			if (Wav.DrawPlots != NULL) {
+				Point3D Init;
+				Init.Init();
+				Wav.DrawPlots[i] = new Point3D[Range]{Init};
+			}			
+		}
+		Tmp.resize(Range,InitPoint);
 		Wav.DrawPlot.resize(3, Tmp);
 		Wav.FFTData = new double[Range];
 		Wav.RawData = new double[Range];
+		Wav.AnalyzedFFTData = new double[Range];
 		Wav.TimeStmp = new int64_t[Range];
 		FFT = new fft4g(Range);
-		Output = new std::fstream(Name, std::fstream::out);
+		FFTBox = new FftBox(Range);
+		Output = new std::fstream(DataName, std::fstream::out);
+		OutputFFT = new std::fstream(FFTName, std::fstream::out);
+		(*OutputFFT) <<  "FFTDATA,SampleNum,";
+		for (int64_t i = 0; i < Range; i++) {
+			(*OutputFFT) << i << ",";
+		}
+		(*OutputFFT) << std::endl;
 	}
 	inline ~AnalyzeFFT() {
 		delete[] FFT;
 		delete[] Output;
+		delete[] OutputFFT;
 		delete[] Wav.FFTData;
 		delete[] Wav.RawData;
 		delete[] Wav.TimeStmp;
+		delete[] Wav.AnalyzedFFTData;
 	}
 	inline void GenerateFreq(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
@@ -109,7 +185,9 @@ public:
 	}
 	inline void SetAxel(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
+		std::complex<double> Comp( 0.0, (double)Event->acceleration.z - (double)9.77017211914625278);
 		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
+		(*FFTBox)[LocalDataPos] = Comp;
 		Wav.RawData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
 		Wav.FFTData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
 		NextDataPos();
@@ -131,8 +209,8 @@ public:
 			 1.0f,0.5f,0.0f 
 		};
 		const GLfloat YLay[] = {//頂点
-			-1.0f,1.0f,0.0f,
-			-1.0f,-1.0f,0.0f };
+			-0.9f,1.0f,0.0f,
+			-0.9f,-1.0f,0.0f };
 		glLineWidth(4.0f);
 		glClearColor(((float)1.0), 1.0, 1, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
@@ -152,20 +230,25 @@ public:
 		glDisableClientState(GL_VERTEX_ARRAY);
 
 
-		glLineWidth(1.0f);
-		glColor4f(0, 1, 0, 0.5f);
-		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[0].data());
+		glLineWidth(3.0f);
+		glColor4f(1.0, 0.0f, 0, 0.0f);
+//		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[0].data());
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlots[0]);
 
 		//線描画
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glDrawArrays(GL_LINE_STRIP, 0, Range);
 		glDisableClientState(GL_VERTEX_ARRAY);
 
-		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[1].data());
+		glColor4f(0.0f, 1.0f, 0, 0.0f);
+//		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[1].data());
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlots[1]);
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glDrawArrays(GL_LINE_STRIP, 0, Range);
 		glDisableClientState(GL_VERTEX_ARRAY);
-		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlot[2].data());
+
+		glColor4f(0.0f, 0.0f, 1.0, 0.0f);
+		glVertexPointer(3, GL_FLOAT, 0, Wav.DrawPlots[2]);
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glDrawArrays(GL_LINE_STRIP, 0, Range);
 		glDisableClientState(GL_VERTEX_ARRAY);
@@ -176,10 +259,10 @@ public:
 	inline void TryProcess(){
 		if (YesSampleEnd()) {
 			CalcFFTddst();
-			MakePlotData(Wav.FFTData, 0);
-			MakePlotData(Wav.RawData, 1);
+			MakePlotData(Wav.RawData, 0);
+			MakePlotDataFFT(Wav.AnalyzedFFTData, 1);
+			MakePlotDataFFT((*FFTBox).GetSpectol(), 2);
 			OutputCSVAll();
-			InitDataPos();
 		}
 	}
 };
@@ -349,6 +432,7 @@ static void engine_handle_cmd(struct android_app* app, int32_t cmd) {
 		if (engine->accelerometerSensor != NULL) {
 			ASensorEventQueue_enableSensor(engine->sensorEventQueue,engine->accelerometerSensor);
 			ASensorEventQueue_setEventRate(engine->sensorEventQueue,engine->accelerometerSensor,  1000);
+			engine_draw_frame(engine);
 		}
 		break;
 	case APP_CMD_LOST_FOCUS:
@@ -383,8 +467,8 @@ void android_main(struct android_app* state) {
 	engine.accelerometerSensor = ASensorManager_getDefaultSensor(engine.sensorManager,ASENSOR_TYPE_ACCELEROMETER);
 	engine.sensorEventQueue = ASensorManager_createEventQueue(engine.sensorManager,state->looper, LOOPER_ID_USER, NULL, NULL);
 	ASensorEventQueue_setEventRate(engine.sensorEventQueue,engine.accelerometerSensor, (1000L));
-	engine.state.FFTUnit.InitFFT("mnt/sdcard/RF.csv");
-	engine.state.FFTUnitTest.InitFFT("mnt/sdcard/MF.csv");
+	engine.state.FFTUnit.InitFFT("mnt/sdcard/RF.csv", "mnt/sdcard/FFTRF.csv");
+	engine.state.FFTUnitTest.InitFFT("mnt/sdcard/MF.csv", "mnt/sdcard/FFTMF.csv");
 	if (state->savedState != NULL) {
 		// 以前の保存状態で開始します。復元してください。
 		engine.state = *(struct saved_state*)state->savedState;
@@ -425,6 +509,7 @@ void android_main(struct android_app* state) {
 					}
 					engine.state.FFTUnit.TryProcess();
 					engine.state.FFTUnitTest.TryProcess();
+					engine.state.FFTUnit.OutputDisp(&engine.display, &engine.surface);
 				}
 			}
 			// 終了するかどうか確認します。

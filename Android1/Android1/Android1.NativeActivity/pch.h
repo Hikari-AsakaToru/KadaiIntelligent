@@ -10,6 +10,7 @@
 #include <jni.h>
 #include <errno.h>
 #include <vector>
+#include <complex>
 #include <string.h>
 #include <unistd.h>
 #include <sys/resource.h>
@@ -25,5 +26,6 @@
 #include "android_native_app_glue.h"
 
 #include "fft4g.hpp"
+
 #define Range 1024
 
