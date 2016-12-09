@@ -44,9 +44,9 @@ struct WaveData {
 
 class AnalyzeFFT {
 	WaveData Wav;
-	fft4g* FFT;
 	FftBox* FFTBox;
 	int64_t InputDataPos;
+	int64_t InputDataNum;
 	std::fstream* Output;
 	std::fstream* OutputFFT;
 	inline int64_t GetSampNum() {
@@ -56,20 +56,10 @@ class AnalyzeFFT {
 		InputDataPos = 0;
 	}
 	inline void OutputCSVFFT() {
-		auto Rloop = GetSampNum();
-		(*OutputFFT) << "OOURAFFT" << ",";
-		(*OutputFFT) << Rloop << ",";
-		for (auto i = 0; i < Range / 2; i++) {
-			(*OutputFFT) << std::sqrt(Wav.FFTData[2 * i] * Wav.FFTData[2 * i] + Wav.FFTData[2 * i + 1] * Wav.FFTData[2 * i + 1]) << ",";
-		}
-		for (auto i = 0; i < Range / 2; i++) {
-			(*OutputFFT) << "0.0,";
-		}
-		(*OutputFFT) << std::endl;
 		(*OutputFFT) << "BoxFFT" << ",";
-		(*OutputFFT) << Rloop << ",";
+		(*OutputFFT) << GetSampNum() << ",";
 		for (auto i = 0; i < Range; i++) {
-			(*OutputFFT) << std::abs((*FFTBox)[i]) << ",";
+			(*OutputFFT) << std::abs((*FFTBox)[i])*2/1024 << ",";
 		}
 		(*OutputFFT) << std::endl;
 	}
@@ -84,19 +74,20 @@ class AnalyzeFFT {
 	}
 	inline void NextDataPos() {
 		InputDataPos++;
+		InputDataNum++;
 	}
 	inline bool YesSampleEnd() {
-		if (InputDataPos > Range) {
+		if (InputDataNum > Range) {
+			InputDataNum = 0;
 			return 1; }
 		else { 
 			return 0;
 		}
 	}
 	inline void CalcFFTddst() {
-		FFT->cdft(1, Wav.FFTData);
 		FFTBox->fft();
 		for (int64_t i = 0; i < Range; i++) {
-			Wav.AnalyzedFFTData[i] = std::abs((*FFTBox)[i])*2/Range;
+			Wav.FFTData[i] = std::abs((*FFTBox)[i])*2/Range;
 			Wav.FFTData[i] *= 2 / Range;
 		}
 	}
@@ -138,6 +129,7 @@ class AnalyzeFFT {
 public:
 	inline void InitFFT(const char* DataName, const char* FFTName) {
 		InputDataPos = 0;
+		InputDataNum = 0;
 		Point3D InitPoint;
 		InitPoint.x = 0;
 		InitPoint.y = 0;
@@ -153,22 +145,20 @@ public:
 		}
 		Tmp.resize(Range,InitPoint);
 		Wav.DrawPlot.resize(3, Tmp);
-		Wav.FFTData = new double[Range];
-		Wav.RawData = new double[Range];
-		Wav.AnalyzedFFTData = new double[Range];
+		Wav.FFTData = new double[Range] {0.0};
+		Wav.RawData = new double[Range] {0.0};
+		Wav.AnalyzedFFTData = new double[Range] {0.0};
 		Wav.TimeStmp = new int64_t[Range];
-		FFT = new fft4g(Range);
 		FFTBox = new FftBox(Range);
 		Output = new std::fstream(DataName, std::fstream::out);
 		OutputFFT = new std::fstream(FFTName, std::fstream::out);
 		(*OutputFFT) <<  "FFTDATA,SampleNum,";
 		for (int64_t i = 0; i < Range; i++) {
-			(*OutputFFT) << i << ",";
+			(*OutputFFT) << i * 200.0 / Range << ",";
 		}
 		(*OutputFFT) << std::endl;
 	}
 	inline ~AnalyzeFFT() {
-		delete[] FFT;
 		delete[] Output;
 		delete[] OutputFFT;
 		delete[] Wav.FFTData;
@@ -179,18 +169,19 @@ public:
 	inline void GenerateFreq(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
 		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
-		Wav.RawData[LocalDataPos] = std::sin(2*3.1415*12* LocalDataPos/ Range);
-		Wav.FFTData[LocalDataPos] = std::sin(2 * 3.1415*12 *LocalDataPos / Range);;
+		Wav.RawData[LocalDataPos] = std::sin(2*3.1415*12* LocalDataPos);
+		Wav.FFTData[LocalDataPos] = std::sin(2 * 3.1415*12 *LocalDataPos);
 		NextDataPos();
 	}
 	inline void SetAxel(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
-		std::complex<double> Comp( 0.0, (double)Event->acceleration.z - (double)9.77017211914625278);
-		Wav.TimeStmp[LocalDataPos] = Event->timestamp;
-		(*FFTBox)[LocalDataPos] = Comp;
-		Wav.RawData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
-		Wav.FFTData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
-		NextDataPos();
+		if (Event->timestamp != 0) {
+			std::complex<double> Comp(0.0, (double)Event->acceleration.z - (double)9.77017211914625278);
+			Wav.TimeStmp[LocalDataPos] = Event->timestamp;
+			(*FFTBox)[LocalDataPos] = Comp;
+			Wav.RawData[LocalDataPos] = (double)Event->acceleration.z - (double)9.77017211914625278;
+			NextDataPos();
+		}
 	}
 	inline void SetVel(const ASensorEvent* Event) {
 		int64_t LocalDataPos = GetDataPos();
@@ -257,13 +248,13 @@ public:
 
 	}
 	inline void TryProcess(){
+		MakePlotData(Wav.RawData, 0);
 		if (YesSampleEnd()) {
 			CalcFFTddst();
-			MakePlotData(Wav.RawData, 0);
-			MakePlotDataFFT(Wav.AnalyzedFFTData, 1);
-			MakePlotDataFFT((*FFTBox).GetSpectol(), 2);
-			OutputCSVAll();
+			MakePlotDataFFT((*FFTBox).GetSpectol(), 1);
+			OutputCSVAll ();
 		}
+
 	}
 };
 

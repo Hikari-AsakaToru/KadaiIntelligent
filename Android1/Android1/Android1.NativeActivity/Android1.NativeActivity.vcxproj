@@ -205,13 +205,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="fft4g.hpp" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="android_native_app_glue.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="android_native_app_glue.c" />
-    <ClCompile Include="fft4g.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="FFT.hpp" />
   </ItemGroup>
